@@ -18,6 +18,26 @@ import {
 	waitAndGetDeployStatus,
 } from "../../api/deployment";
 import { formatError } from "../../utils/customErrHandler";
+import {
+	filterList,
+	listFilterParams,
+	stripODataNoise,
+} from "../../utils/responseFilter";
+
+/** Compact fields for an integration designtime artifact (iflow) list entry. */
+const IFLOW_DEFAULT_FIELDS = [
+	"Id",
+	"Name",
+	"Version",
+	"Description",
+	"PackageId",
+	"Sender",
+	"Receiver",
+	"ModifiedBy",
+	"ModifiedAt",
+];
+
+const IFLOW_SEARCH_FIELDS = ["Id", "Name", "Description", "Sender", "Receiver"];
 
 export const updateFiles = z.array(
 	z.object({
@@ -200,7 +220,7 @@ These are the prefixes based on protocol. So if you get /some/endpoint from get-
 							type: "text",
 							text: JSON.stringify({
 								type: "success",
-								endpoints,
+								endpoints: stripODataNoise(endpoints),
 							}),
 						},
 					],
@@ -317,7 +337,8 @@ Not every iflow is using configurations tho. most of the time configuration is m
 					content: [
 						{
 							text: JSON.stringify({
-								iflowConfiguration: configurations,
+								iflowConfiguration:
+									stripODataNoise(configurations),
 							}),
 							type: "text",
 						},
@@ -335,18 +356,35 @@ Not every iflow is using configurations tho. most of the time configuration is m
 	server.registerToolIntegrationSuite(
 		"get-all-iflows",
 		`Get a list of all available iflows in a Package
-If the user asks for all iflows, get all packages first and then query for each package`,
+If the user asks for all iflows, get all packages first and then query for each package
+By default only a compact set of fields is returned per iflow and OData metadata/navigation noise is stripped.
+Use "search" to filter, "limit"/"offset" to page and "fields" (e.g. ["all"]) to control returned fields.`,
 		{
 			pkgId: z.string().describe("Package id"),
+			...listFilterParams,
 		},
-		async ({ pkgId }) => {
+		async ({ pkgId, search, fields, limit, offset }) => {
 			try {
 				const allIFs = await getAllIflowsByPackage(pkgId);
+				const result = filterList(allIFs as any[], {
+					search,
+					fields,
+					limit,
+					offset,
+					searchFields: IFLOW_SEARCH_FIELDS,
+					defaultFields: IFLOW_DEFAULT_FIELDS,
+				});
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ iflows: allIFs }),
+							text: JSON.stringify({
+								iflows: result.items,
+								returned: result.returned,
+								matched: result.matched,
+								total: result.total,
+								truncated: result.truncated,
+							}),
 						},
 					],
 				};

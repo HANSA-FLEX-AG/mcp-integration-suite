@@ -18,7 +18,32 @@ process.on("uncaughtException", (err) => {
 	exit(2);
 });
 
-config({ path: path.join(projPath, ".env") });
+// Allow passing a custom .env file path as a CLI argument.
+// Supports `--env-file <path>`, `--env-file=<path>`, or a bare path as the first argument.
+const getEnvFilePath = (): string => {
+	const args = process.argv.slice(2);
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--env-file" || arg === "-e") {
+			if (args[i + 1]) {
+				return path.resolve(args[i + 1]);
+			}
+		} else if (arg.startsWith("--env-file=")) {
+			return path.resolve(arg.slice("--env-file=".length));
+		}
+	}
+
+	// Fall back to the first non-flag argument, then to the default location.
+	const bareArg = args.find((arg) => !arg.startsWith("-"));
+	if (bareArg) {
+		return path.resolve(bareArg);
+	}
+
+	return path.join(projPath, ".env");
+};
+
+config({ path: getEnvFilePath() });
 
 const server = new McpServerWithMiddleware({
 	name: "integration-suite",

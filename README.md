@@ -33,6 +33,24 @@ For Claude Desktop: `~/Library/Application\ Support/Claude/claude_desktop_config
 }
 ```
 
+By default the server reads the `.env` file located in the project root. You can point it to a different `.env` file by passing its path as an argument:
+```json
+{
+  "mcpServers": {
+    "mcp-integration-suite": {
+      "command": "node",
+      "args": [
+        "<project path>/dist/index.js",
+        "--env-file",
+        "<path to your .env>"
+      ],
+      "autoApprove": []
+    }
+  }
+}
+```
+The path can also be passed as `--env-file=<path>` or as a bare first argument.
+
 ## Custom Prompt
 ```
 # SAP Integration Suite Tools - Start Here
@@ -103,6 +121,31 @@ You can access the following tools:
    - `get-messages` - Get message from message monitoring
    - `count-messages` - Count messages from the message monitoring. Is useful for making summaries etc.
    - `send-http-message` - Send an HTTP request to integration suite
+
+## Response filtering (keeping responses small)
+
+The listing/monitoring tools strip SAP OData noise (`__metadata`, `__deferred`
+navigation links, `null`/empty fields) and expose optional filter parameters so
+responses stay small enough for an LLM context:
+
+- `packages`, `discover-packages`, `get-all-iflows`, `get-all-messagemappings`
+  accept:
+  - `search` - case-insensitive substring filter; only matching items are returned
+  - `fields` - array of fields to keep per item (use `["all"]` for the full objects);
+    defaults to a compact set of the most useful fields
+  - `limit` / `offset` - page through results
+  - The response includes `returned` / `matched` / `total` / `truncated` counts.
+  - `discover-packages` is very large, so without a `search` it returns only the
+    first 25 packages.
+- `get-messages` returns lightweight metadata by default (plus error information
+  for failed messages). Heavy per-message details are opt-in because each adds an
+  API call and can be very large:
+  - `includeAttachments` (default `false`) - downloads the base64 attachment bodies
+  - `includeCustomHeaders`, `includeAdapterAttributes` (default `false`)
+  - `includeErrorInformation` (default `true`)
+  - `limit` (max 50) and `fields` to further trim the response.
+- `search-docs` returns matching document paths plus a short snippet by default;
+  pass `fullContent: true` (and optionally `limit`) to get the full bodies inline.
 
 ## Key IFlow Components
 

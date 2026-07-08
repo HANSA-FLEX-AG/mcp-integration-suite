@@ -157,7 +157,11 @@ describe("Message Log API", () => {
         const errorStatuses = ["RETRY", "FAILED", "ABANDONED", "ESCALATED", "DISCARDED"]; // From messageLogs.ts
 
         try {
-            const messages = await getMessages({ msgGUID: messageGuid });
+            // Attachments are opt-in now, so request them explicitly.
+            const messages = await getMessages(
+                { msgGUID: messageGuid },
+                { includeAttachments: true }
+            );
 
             expect(messages).toBeDefined();
             expect(Array.isArray(messages)).toBe(true);

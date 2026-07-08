@@ -13,6 +13,20 @@ import { updateFiles } from "../iflow/tools";
 import { waitAndGetDeployStatus } from "../../api/deployment";
 import { formatError } from "../../utils/customErrHandler";
 import { createMappingTestIflow } from "../../api/messages/messageLogs";
+import { filterList, listFilterParams } from "../../utils/responseFilter";
+
+/** Compact fields for a message mapping list entry. */
+const MAPPING_DEFAULT_FIELDS = [
+	"Id",
+	"Name",
+	"Version",
+	"Description",
+	"PackageId",
+	"ModifiedBy",
+	"ModifiedAt",
+];
+
+const MAPPING_SEARCH_FIELDS = ["Id", "Name", "Description"];
 
 export const registerMappingsHandler = (server: McpServerWithMiddleware) => {
 	server.registerToolIntegrationSuite(
@@ -177,16 +191,31 @@ export const registerMappingsHandler = (server: McpServerWithMiddleware) => {
 
 	server.registerToolIntegrationSuite(
 		"get-all-messagemappings",
-		"Get all available message mappings",
-		{},
-		async () => {
+		`Get all available message mappings.
+By default only a compact set of fields is returned per mapping and OData metadata/navigation noise is stripped.
+Use "search" to filter, "limit"/"offset" to page and "fields" (e.g. ["all"]) to control returned fields.`,
+		{ ...listFilterParams },
+		async ({ search, fields, limit, offset }) => {
 			try {
+				const allMappings = await getAllMessageMappings();
+				const result = filterList(allMappings as any[], {
+					search,
+					fields,
+					limit,
+					offset,
+					searchFields: MAPPING_SEARCH_FIELDS,
+					defaultFields: MAPPING_DEFAULT_FIELDS,
+				});
 				return {
 					content: [
 						{
 							type: "text",
 							text: JSON.stringify({
-								messageMappings: await getAllMessageMappings(),
+								messageMappings: result.items,
+								returned: result.returned,
+								matched: result.matched,
+								total: result.total,
+								truncated: result.truncated,
 							}),
 						},
 					],

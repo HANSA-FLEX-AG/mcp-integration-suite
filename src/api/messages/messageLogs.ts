@@ -81,25 +81,55 @@ export const getFilters = (
 };
 
 /**
- * Get messages from messaging log with dependencies
- * Honestly needs refactoring
+ * Options controlling how much detail is loaded per message.
+ * Each enabled "include" causes an extra API call per message (attachments
+ * additionally download the base64 media), so they default to off to keep
+ * responses small and fast. Error information is loaded by default because it
+ * is the main reason to inspect failed messages.
+ */
+export interface GetMessagesOptions {
+	/** Max messages to fetch (SAP cap is 50). */
+	limit?: number;
+	/** Fetch adapter attributes per message. */
+	includeAdapterAttributes?: boolean;
+	/** Fetch custom header properties per message. */
+	includeCustomHeaders?: boolean;
+	/** Fetch attachment metadata AND download the base64 attachment bodies. */
+	includeAttachments?: boolean;
+	/** Fetch error information for failed/retry/etc. messages (default true). */
+	includeErrorInformation?: boolean;
+}
+
+/**
+ * Get messages from messaging log with optional dependencies.
  * @param filterProps Available filters
- * @returns Messages with all dependencies
+ * @param options What extra detail to load and how many messages to return
+ * @returns Messages, enriched only with the requested details
  */
 export const getMessages = async (
-	filterProps: z.infer<typeof messageFilterSchema>
+	filterProps: z.infer<typeof messageFilterSchema>,
+	options: GetMessagesOptions = {}
 ): Promise<
 	(MessageProcessingLogs & {
 		ErrorInformationValue?: string;
 		messageAttachementFiles?: { description?: string; data: string }[];
 	})[]
 > => {
+	const {
+		limit = 50,
+		includeAdapterAttributes = false,
+		includeCustomHeaders = false,
+		includeAttachments = false,
+		includeErrorInformation = true,
+	} = options;
+
+	// SAP caps the result set at 50; keep within that and honor a smaller limit.
+	const effectiveLimit = Math.min(Math.max(limit, 1), 50);
+
 	const messageBaseReq = messageProcessingLogsApi
 		.requestBuilder()
 		.getAll()
-		// Every message will cause 4 API calls so be aware of rate limits
-		// also most LLM truncate Output at some point
-		.top(50)
+		.top(effectiveLimit)
 		.filter(getFilters(filterProps));
 
 	logInfo(await messageBaseReq.url(await getCurrentDestination()));
@@ -111,77 +141,89 @@ export const getMessages = async (
 
 	logInfo(`Found ${messageWithErrVal.length} messages`);
 
-	// Fill all dependencies of the message log entry and return the object
+	// Fill only the requested dependencies of the message log entry
 	return Promise.all(
 		messageWithErrVal.map(async (message) => {
-			try {
-				message.adapterAttributes = (
-					await messageProcessingLogsApi
-						.requestBuilder()
-						.getByKey(message.messageGuid)
-						.appendPath("/AdapterAttributes")
-						.executeRaw(await getCurrentDestination())
-				).data;
-			} catch (error) {
-				logInfo(
-					`Could not get adapterAttributes for ${message.messageGuid}`
-				);
-			}
-
-			try {
-				message.customHeaderProperties = (
-					await messageProcessingLogsApi
-						.requestBuilder()
-						.getByKey(message.messageGuid)
-						.appendPath("/CustomHeaderProperties")
-						.executeRaw(await getCurrentDestination())
-				).data.d.results;
-			} catch (error) {
-				logInfo(
-					`Could not get CustomHeaderProperties for ${message.messageGuid}`
-				);
-				logInfo(error);
-			}
-
-			try {
-				message.attachments = (
-					await messageProcessingLogsApi
-						.requestBuilder()
-						.getByKey(message.messageGuid)
-						.appendPath("/Attachments")
-						.executeRaw(await getCurrentDestination())
-				).data.d.results;
-
-				logInfo(
-					`Found ${message.attachments.length} attachements for ${message.messageGuid}`
-				);
-
-				message.messageAttachementFiles = [];
-
-				for (const attachement of message.attachments) {
-					message.messageAttachementFiles?.push({
-						description: attachement.name as string,
-						// TS ignore because SAP specification is not what they actually provide
-
-						data: await getMessageMedia(
-							// @ts-ignore
-							attachement["Id"] as string
-						),
-					});
+			if (includeAdapterAttributes) {
+				try {
+					message.adapterAttributes = (
+						await messageProcessingLogsApi
+							.requestBuilder()
+							.getByKey(message.messageGuid)
+							.appendPath("/AdapterAttributes")
+							.executeRaw(await getCurrentDestination())
+					).data;
+				} catch (error) {
+					logInfo(
+						`Could not get adapterAttributes for ${message.messageGuid}`
+					);
 				}
-			} catch (error) {
-				logInfo(`Could not get Attachments for ${message.messageGuid}`);
-				logInfo(
-					await messageProcessingLogsApi
-						.requestBuilder()
-						.getByKey(message.messageGuid)
-						.appendPath("/Attachments")
-						.url(await getCurrentDestination())
-				);
-				logInfo(error);
 			}
 
-			if (message.status && errStatus.includes(message.status)) {
+			if (includeCustomHeaders) {
+				try {
+					message.customHeaderProperties = (
+						await messageProcessingLogsApi
+							.requestBuilder()
+							.getByKey(message.messageGuid)
+							.appendPath("/CustomHeaderProperties")
+							.executeRaw(await getCurrentDestination())
+					).data.d.results;
+				} catch (error) {
+					logInfo(
+						`Could not get CustomHeaderProperties for ${message.messageGuid}`
+					);
+					logInfo(error);
+				}
+			}
+
+			if (includeAttachments) {
+				try {
+					message.attachments = (
+						await messageProcessingLogsApi
+							.requestBuilder()
+							.getByKey(message.messageGuid)
+							.appendPath("/Attachments")
+							.executeRaw(await getCurrentDestination())
+					).data.d.results;
+
+					logInfo(
+						`Found ${message.attachments.length} attachements for ${message.messageGuid}`
+					);
+
+					message.messageAttachementFiles = [];
+
+					for (const attachement of message.attachments) {
+						message.messageAttachementFiles?.push({
+							description: attachement.name as string,
+							// TS ignore because SAP specification is not what they actually provide
+
+							data: await getMessageMedia(
+								// @ts-ignore
+								attachement["Id"] as string
+							),
+						});
+					}
+				} catch (error) {
+					logInfo(
+						`Could not get Attachments for ${message.messageGuid}`
+					);
+					logInfo(
+						await messageProcessingLogsApi
+							.requestBuilder()
+							.getByKey(message.messageGuid)
+							.appendPath("/Attachments")
+							.url(await getCurrentDestination())
+					);
+					logInfo(error);
+				}
+			}
+
+			if (
+				includeErrorInformation &&
+				message.status &&
+				errStatus.includes(message.status)
+			) {
 				try {
 					logInfo(
 						`Getting error value for msg: ${message.messageGuid}`
